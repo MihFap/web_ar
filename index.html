@@ -1,121 +1,105 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>AR Armchair</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <style>
-      body { margin: 0; overflow: hidden; }
-      canvas { display: block; }
-    </style>
-  </head>
-  <body>
-    <script type="module">
-      import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-      import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
-      import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/ARButton.js';
-      import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+<head>
+  <meta charset="UTF-8" />
+  <title>WebXR AR Hit Test Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+    import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
-      let camera, scene, renderer, reticle;
-      let hitTestSource = null;
-      let hitTestSourceRequested = false;
-      let controller;
-      let model; // Mô hình armchair
-      let isInAR = false;
+    let camera, scene, renderer, reticle;
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
 
-      init();
+    init();
 
-      function init() {
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera();
 
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true;
-        document.body.appendChild(renderer.domElement);
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
 
-        // Đèn
-        const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-        scene.add(light);
+      // Nút AR
+      document.body.appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test']
+      }));
 
-        // Nút AR
-        document.body.appendChild(ARButton.createButton(renderer, {
-          requiredFeatures: ['hit-test'],
-          optionalFeatures: ['dom-overlay'],
-          domOverlay: { root: document.body }
-        }));
+      // Đèn
+      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+      scene.add(light);
 
-        // OrbitControls nếu không ở chế độ AR
-        const controls = new OrbitControls(camera, renderer.domElement);
-        camera.position.set(0, 1, 2);
-        controls.update();
+      // Tạo con trỏ định vị (reticle)
+      const ringGeo = new THREE.RingGeometry(0.07, 0.09, 32).rotateX(-Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+      reticle = new THREE.Mesh(ringGeo, ringMat);
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
 
-        // Reticle để xác định mặt phẳng
-        const ringGeo = new THREE.RingGeometry(0.07, 0.09, 32).rotateX(-Math.PI / 2);
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-        reticle = new THREE.Mesh(ringGeo, ringMat);
-        reticle.matrixAutoUpdate = false;
-        reticle.visible = false;
-        scene.add(reticle);
+      // Xử lý sự kiện click để đặt mô hình
+      renderer.domElement.addEventListener('click', () => {
+        if (reticle.visible) {
+          const cube = new THREE.Mesh(
+            new THREE.BoxGeometry(0.1, 0.1, 0.1),
+            new THREE.MeshPhongMaterial({ color: 0xff0000 })
+          );
+          cube.position.setFromMatrixPosition(reticle.matrix);
+          scene.add(cube);
+        }
+      });
 
-        // Tải mô hình armchair
-        const loader = new GLTFLoader();
-        loader.load('armchair.glb', gltf => {
-          model = gltf.scene;
-          model.scale.set(0.5, 0.5, 0.5); // điều chỉnh nếu cần
-        });
+      renderer.setAnimationLoop(render);
+    }
 
-        // Controller
-        controller = renderer.xr.getController(0);
-        controller.addEventListener('select', () => {
-          if (reticle.visible && model) {
-            const clone = model.clone();
-            clone.position.setFromMatrixPosition(reticle.matrix);
-            scene.add(clone);
-          }
-        });
-        scene.add(controller);
+    function render(timestamp, frame) {
+      if (frame) {
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
 
-        renderer.setAnimationLoop(render);
-      }
-
-      function render(timestamp, frame) {
-        if (frame) {
-          const referenceSpace = renderer.xr.getReferenceSpace();
-          const session = renderer.xr.getSession();
-
-          if (!hitTestSourceRequested) {
-            session.requestReferenceSpace('viewer').then(refSpace => {
-              session.requestHitTestSource({ space: refSpace }).then(source => {
-                hitTestSource = source;
-              });
+        if (!hitTestSourceRequested) {
+          session.requestReferenceSpace('viewer').then((refSpace) => {
+            session.requestHitTestSource({ space: refSpace }).then((source) => {
+              hitTestSource = source;
             });
-
-            session.addEventListener('end', () => {
-              hitTestSourceRequested = false;
-              hitTestSource = null;
-              isInAR = false;
-            });
-
-            hitTestSourceRequested = true;
-            isInAR = true;
-          }
-
-          if (hitTestSource) {
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            if (hitTestResults.length > 0) {
-              const hit = hitTestResults[0];
-              const pose = hit.getPose(referenceSpace);
-              reticle.visible = true;
-              reticle.matrix.fromArray(pose.transform.matrix);
-            } else {
-              reticle.visible = false;
-            }
-          }
+          });
+          session.addEventListener('end', () => {
+            hitTestSourceRequested = false;
+            hitTestSource = null;
+          });
+          hitTestSourceRequested = true;
         }
 
-        renderer.render(scene, camera);
+        if (hitTestSource) {
+          const hitTestResults = frame.getHitTestResults(hitTestSource);
+          if (hitTestResults.length > 0) {
+            const hit = hitTestResults[0];
+            const pose = hit.getPose(referenceSpace);
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+          } else {
+            reticle.visible = false;
+          }
+        }
       }
-    </script>
-  </body>
+
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
 </html>
